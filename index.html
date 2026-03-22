@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FAR 117 – 30-in-168 Checker</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 1.5rem;
+      max-width: 800px;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    label { font-weight: 600; display: block; margin-top: 1rem; }
+    input[type="datetime-local"] {
+      padding: 0.25rem 0.4rem;
+      margin-top: 0.25rem;
+      width: 100%;
+      max-width: 280px;
+    }
+    .duties {
+      margin-top: 0.5rem;
+      border: 1px solid #ccc;
+      padding: 0.75rem;
+      border-radius: 6px;
+    }
+    .duty-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 0.5rem;
+    }
+    .duty-row input[type="datetime-local"] {
+      max-width: 100%;
+    }
+    button {
+      margin-top: 1rem;
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #222;
+      color: #fff;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #eee;
+      color: #222;
+      border-color: #aaa;
+      font-size: 0.85rem;
+      padding: 0.25rem 0.6rem;
+    }
+    #result {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border-radius: 6px;
+    }
+    #result.ok {
+      background: #e6f4ea;
+      border: 1px solid #34a853;
+      color: #0b5f26;
+    }
+    #result.not-ok {
+      background: #fce8e6;
+      border: 1px solid #d93025;
+      color: #7a1b13;
+    }
+    #details {
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img
+      src="am-i-legal-banner.png"
+      alt="Am I legal? 30 in 168 calculator"
+      style="max-width: 100%; height: auto; display: block; margin: 0 auto 1rem;"
+    >
+  </header>
+  <h1>FAR 117 &mdash; 30-in-168 Rest Check</h1>
+  <p>
+    Enter your proposed RAP/FDP start time and the duty/RAP/FDP periods in the previous 7 days.
+    The tool checks whether you had at least 30 consecutive hours free from all duty in the
+    168 hours prior to that start time.
+  </p>
+
+  <label for="currentStart">When does your RAP or FDP begin?</label>
+  <input type="datetime-local" id="currentStart">
+
+  <label>Previous duty / RAP / FDP periods (start and end times)</label>
+  <div class="duties" id="dutiesContainer">
+    <!-- rows will be added here -->
+  </div>
+  <button type="button" class="secondary" id="addDutyBtn">+ Add duty period</button>
+
+  <div>
+    <button type="button" id="checkBtn">Check 30-in-168</button>
+  </div>
+
+  <div id="result" style="display:none;">
+    <strong id="resultText"></strong>
+    <div id="details"></div>
+  </div>
+
+  <script>
+    const dutiesContainer = document.getElementById('dutiesContainer');
+    const addDutyBtn = document.getElementById('addDutyBtn');
+    const checkBtn = document.getElementById('checkBtn');
+    const resultBox = document.getElementById('result');
+    const resultText = document.getElementById('resultText');
+    const detailsEl = document.getElementById('details');
+
+    const MS_PER_HOUR = 60 * 60 * 1000;
+
+    function addDutyRow() {
+      const row = document.createElement('div');
+      row.className = 'duty-row';
+      row.innerHTML = `
+        <div>
+          <small>Start</small>
+          <input type="datetime-local" class="duty-start">
+        </div>
+        <div>
+          <small>End</small>
+          <input type="datetime-local" class="duty-end">
+        </div>
+        <button type="button" class="secondary remove-btn">Remove</button>
+      `;
+      row.querySelector('.remove-btn').addEventListener('click', () => {
+        dutiesContainer.removeChild(row);
+      });
+      dutiesContainer.appendChild(row);
+    }
+
+    // Start with a few empty rows
+    for (let i = 0; i < 3; i++) addDutyRow();
+
+    addDutyBtn.addEventListener('click', addDutyRow);
+
+    function parseDate(value) {
+      if (!value) return null;
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    function checkThirtyInOneSixtyEight() {
+      const currentVal = document.getElementById('currentStart').value;
+      const currentStart = parseDate(currentVal);
+      if (!currentStart) {
+        alert('Please enter your current RAP/FDP start time.');
+        return;
+      }
+
+      const windowStart = new Date(currentStart.getTime() - 168 * MS_PER_HOUR);
+
+      // Collect duty periods
+      let periods = [];
+      const rows = dutiesContainer.querySelectorAll('.duty-row');
+      rows.forEach(row => {
+        const startInput = row.querySelector('.duty-start').value;
+        const endInput = row.querySelector('.duty-end').value;
+        const start = parseDate(startInput);
+        const end = parseDate(endInput);
+        if (!start || !end) return;          // skip incomplete rows
+        if (end <= start) return;            // skip invalid intervals
+        // Ignore if completely outside the 168h look-back window
+        if (end <= windowStart || start >= currentStart) return;
+        const clampedStart = start < windowStart ? windowStart : start;
+        const clampedEnd = end > currentStart ? currentStart : end;
+        periods.push({ start: clampedStart, end: clampedEnd });
+      });
+
+      // Sort and merge overlapping duty periods
+      periods.sort((a, b) => a.start - b.start);
+      const merged = [];
+      for (const p of periods) {
+        if (!merged.length) {
+          merged.push({ ...p });
+        } else {
+          const last = merged[merged.length - 1];
+          if (p.start <= last.end) {
+            // overlap or touch: extend last
+            if (p.end > last.end) last.end = p.end;
+          } else {
+            merged.push({ ...p });
+          }
+        }
+      }
+
+      // Build off-duty blocks
+      const offBlocks = [];
+      let cursor = new Date(windowStart.getTime());
+      for (const duty of merged) {
+        if (duty.start > cursor) {
+          offBlocks.push({ start: new Date(cursor), end: new Date(duty.start) });
+        }
+        if (duty.end > cursor) {
+          cursor = new Date(duty.end);
+        }
+      }
+      if (cursor < currentStart) {
+        offBlocks.push({ start: new Date(cursor), end: new Date(currentStart) });
+      }
+
+      // Analyze off-duty blocks
+      let hasThirty = false;
+      let maxBlock = null;
+      let maxHours = 0;
+
+      offBlocks.forEach(block => {
+        const hours = (block.end - block.start) / MS_PER_HOUR;
+        if (hours > maxHours) {
+          maxHours = hours;
+          maxBlock = block;
+        }
+        if (hours >= 30) {
+          hasThirty = true;
+        }
+      });
+
+      resultBox.style.display = 'block';
+      if (hasThirty) {
+        resultBox.className = 'ok';
+        resultText.textContent = 'Compliant: at least one continuous 30-hour off-duty period exists in the last 168 hours.';
+      } else {
+        resultBox.className = 'not-ok';
+        resultText.textContent = 'Not compliant: no continuous 30-hour off-duty period found in the last 168 hours.';
+      }
+
+      if (maxBlock) {
+        const opts = { hour: '2-digit', minute: '2-digit', month: 'short', day: '2-digit' };
+        detailsEl.textContent =
+          `Longest off-duty block was about ${maxHours.toFixed(1)} hours, ` +
+          `from ${maxBlock.start.toLocaleString(undefined, opts)} ` +
+          `to ${maxBlock.end.toLocaleString(undefined, opts)} (local browser time).`;
+      } else {
+        detailsEl.textContent = 'No off-duty time detected in the 168-hour look-back window based on the entered duty periods.';
+      }
+    }
+
+    checkBtn.addEventListener('click', checkThirtyInOneSixtyEight);
+  </script>
+</body>
+</html>
